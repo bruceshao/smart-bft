@@ -13,6 +13,8 @@ import com.x.farmer.bft.message.WriteMessage;
  */
 public class LeaderChangeMsgListenerEventProducer {
 
+
+
     private final RingBuffer<CallBackListenerEvent<LeaderChangeMessage>> ringBuffer;
 
     public LeaderChangeMsgListenerEventProducer(RingBuffer<CallBackListenerEvent<LeaderChangeMessage>> ringBuffer) {

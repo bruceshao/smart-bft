@@ -94,6 +94,11 @@ public class ViewController {
         return sequence.incrementAndGet();
     }
 
+    public boolean isLeaderSequence(long seq) {
+        // 期望发送来的Sequence是比当前值大1
+        return sequence.compareAndSet(seq - 1, seq);
+    }
+
     public int localId() {
         return local.getId();
     }
@@ -113,5 +118,6 @@ public class ViewController {
 
     public void newLeader(int leader) {
         this.leader = leader;
+        this.sequence.set(0);
     }
 }

@@ -39,6 +39,11 @@ public class ProposeMessageHandler {
             throw new IllegalStateException("Message is not from Leader !!!");
         }
 
+        if (!viewController.isLeaderSequence(proposeMessage.getSequence())) {
+            // TODO 消息的Seq与本地保存的Leader不一致，继续处理，等第三阶段处理
+            throw new IllegalStateException("Message's sequence is not as expected !!!");
+        }
+
         List<RequestMessage> requestMessages = proposeMessage.getRequestMessages();
 
         List<byte[]> commands = new ArrayList<>();

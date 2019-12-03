@@ -115,7 +115,7 @@ public class ConsensusMessageHandler extends ChannelInboundHandlerAdapter {
             if (listener != null) {
                 listener.receive(message);
             } else {
-                listener = listenerPool.leaderChangeMsgCallBackListener(msgKey);
+                listener = listenerPool.leaderChangeMsgCallBackListener(msgKey, true);
                 // 后续的消息不会再执行该消息
                 addLeaderChangeMsgListener(listener);
                 listener.receive(message);

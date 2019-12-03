@@ -141,7 +141,7 @@ public class LayerInitializer implements AutoCloseable {
         // 将Disruptor加入到Server
         consensusServer.init(listenerPool,
                 timeoutListenerProducer, proposeMessageEventProducer, leaderChangeListenerProducer);
-        acceptMsgListenerHandler.initLayerEngine(layerEngine);
+        acceptMsgListenerHandler.initLayerEngineAndLeaderChangeListener(layerEngine, leaderChangeListenerProducer);
         leaderChangeListenerHandler.initLayerEngine(layerEngine);
         requestDatas.initTimer(requestMessageTimer);
 
@@ -212,7 +212,8 @@ public class LayerInitializer implements AutoCloseable {
                 ProducerType.SINGLE, new BlockingWaitStrategy());
 
         AcceptMsgListenerEventHandler eventHandler = new AcceptMsgListenerEventHandler(
-                viewController, consensusServer, new AcceptMessageHandler(), requestDatas);
+                viewController, listenerPool, replicaClientPool,
+                consensusServer, new AcceptMessageHandler(), requestDatas);
 
         // 连接Handler（即消费者）
         disruptor.handleEventsWith(eventHandler);

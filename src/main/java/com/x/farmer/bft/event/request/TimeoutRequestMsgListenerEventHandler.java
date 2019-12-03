@@ -58,21 +58,23 @@ public class TimeoutRequestMsgListenerEventHandler implements EventHandler<CallB
             // 假设超时的消息会在大部分节点定时器中自动发现，并发送
             timeoutMessages = listener.waitResponses(TIME_OUT_WAIT_TIMES, TimeUnit.MILLISECONDS);
             if (canAccept(timeoutMessages)) {
-                // TODO 发送LeaderChangeMessage进行领导者改变处理
+                // 发送LeaderChangeMessage进行领导者改变处理
                 // LeaderChange的Key是超时消息的key
                 LeaderChangeMessage leaderChangeMessage = convertToLeaderChangeMessage(timeoutMessages.get(0));
 
                 CallBackListener<LeaderChangeMessage> leaderChangeMsgListener = listenerPool.leaderChangeMsgCallBackListener(
                         listener.getKey());
 
-                consensusServer.addLeaderChangeMsgListener(leaderChangeMsgListener);
+                if (leaderChangeMsgListener != null) {
+                    consensusServer.addLeaderChangeMsgListener(leaderChangeMsgListener);
 
-                replicaClientPool.broadcastLeaderChangeMessage(leaderChangeMessage);
+                    replicaClientPool.broadcastLeaderChangeMessage(leaderChangeMessage);
 
-                leaderChangeMsgListener.receive(leaderChangeMessage);
+                    leaderChangeMsgListener.receive(leaderChangeMessage);
 
-                // 通过另外的线程处理该监听器
-                listenerEventProducer.produce(leaderChangeMsgListener);
+                    // 通过另外的线程处理该监听器
+                    listenerEventProducer.produce(leaderChangeMsgListener);
+                }
             }
         } catch (BftServiceException e) {
             // TODO 已经被处理过，因此不需要再处理
@@ -91,6 +93,6 @@ public class TimeoutRequestMsgListenerEventHandler implements EventHandler<CallB
 
     private LeaderChangeMessage convertToLeaderChangeMessage(RequestTimeoutMessage timeoutMessage) {
 
-        return new LeaderChangeMessage(timeoutMessage.id(), timeoutMessage.sequence(), timeoutMessage.key(), viewController.newLeader());
+        return new LeaderChangeMessage(viewController.localId(), timeoutMessage.id(), timeoutMessage.sequence(), timeoutMessage.key(), viewController.newLeader());
     }
 }

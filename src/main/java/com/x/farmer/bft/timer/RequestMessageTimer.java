@@ -45,17 +45,19 @@ public class RequestMessageTimer implements AutoCloseable {
             timerThreadPool = new ScheduledThreadPoolExecutor(1,
                     new BasicThreadFactory.Builder().namingPattern("timer-schedule-pool-%d")
                             .daemon(true).build());
-            timerThreadPool.scheduleAtFixedRate(timeoutRunner, 0, 1, TimeUnit.SECONDS);
+            timerThreadPool.scheduleAtFixedRate(timeoutRunner, 0, 2, TimeUnit.SECONDS);
         }
     }
 
     public void addTimer(int id, long sequence) {
 
-        listLock.lock();
-        try {
-            linkedList.addLast(new RequestMessageRemark(id, sequence));
-        } finally {
-            listLock.unlock();
+        if (timeoutRunner != null) {
+            listLock.lock();
+            try {
+                linkedList.addLast(new RequestMessageRemark(id, sequence));
+            } finally {
+                listLock.unlock();
+            }
         }
     }
 
@@ -94,6 +96,8 @@ public class RequestMessageTimer implements AutoCloseable {
         @Override
         public void run() {
             // 默认只有一个线程处理
+            // 确保每次只进行一次领导者改变
+            boolean currentTimerHaveHandled = false;
 
             while (isWork) {
 
@@ -122,9 +126,12 @@ public class RequestMessageTimer implements AutoCloseable {
                 }
                 // 否则判断当前消息状态
                 if (rm.getState() < RequestMessage.STATE_PROPOSED) {
-                    // 当前消息未处理，将其加入到处理线程，等到其他节点同步
-                    requestTimeoutEventProducer.produce(new RequestTimeoutMessage(
-                            rm.getId(), rm.getSequence(), rm.getKey(), rm.getBody()));
+                    if (!currentTimerHaveHandled) {
+                        // 当前消息未处理，将其加入到处理线程，等到其他节点同步
+                        requestTimeoutEventProducer.produce(new RequestTimeoutMessage(
+                                rm.getId(), rm.getSequence(), rm.getKey(), rm.getBody()));
+                        currentTimerHaveHandled = true;
+                    }
                 } else if (rm.getState() < RequestMessage.STATE_ACCEPTED) {
                     // TODO 已经开始共识，但尚未共识完成，暂不处理
                 }

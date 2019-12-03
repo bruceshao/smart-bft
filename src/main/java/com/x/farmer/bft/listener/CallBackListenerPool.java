@@ -9,6 +9,13 @@ import java.util.concurrent.locks.ReentrantLock;
 
 public class CallBackListenerPool {
 
+    /**
+     *
+     * 领导者改变消息处理需要等待时间
+     *    单位：毫秒
+     */
+    private static final long LEDAER_CHANGE_WAIT_TIMES = 10 * 1000;
+
     private static final int MAP_MAX_SIZE = 1024;
 
     private final Lock timeoutListenerLock = new ReentrantLock();
@@ -29,15 +36,27 @@ public class CallBackListenerPool {
 
     private final int size;
 
+    private long lastLeaderChangeTime = 0L;
+
     public CallBackListenerPool(int size) {
         this.size = size;
     }
 
     public CallBackListener<LeaderChangeMessage> leaderChangeMsgCallBackListener(long key) {
+        return leaderChangeMsgCallBackListener(key, false);
+    }
+
+    public CallBackListener<LeaderChangeMessage> leaderChangeMsgCallBackListener(long key, boolean isReceive) {
         Object listener = leaderChangeListenerMap.get(key);
 
         if (listener == null) {
             leaderChangeListenerLock.lock();
+            // 领导者改变消息只能在短时间内触发一次
+            if (!isReceive && (System.currentTimeMillis() - lastLeaderChangeTime < LEDAER_CHANGE_WAIT_TIMES)) {
+                lastLeaderChangeTime = System.currentTimeMillis();
+                return null;
+            }
+
             try {
                 listener = leaderChangeListenerMap.get(key);
                 if (listener == null) {

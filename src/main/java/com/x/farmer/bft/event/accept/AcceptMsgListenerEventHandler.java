@@ -3,19 +3,22 @@ package com.x.farmer.bft.event.accept;
 
 import com.lmax.disruptor.EventHandler;
 import com.x.farmer.bft.LayerEngine;
+import com.x.farmer.bft.client.replica.ReplicaClientPool;
 import com.x.farmer.bft.config.ViewController;
 import com.x.farmer.bft.data.RequestDatas;
 import com.x.farmer.bft.event.CallBackListenerEvent;
+import com.x.farmer.bft.event.leader.LeaderChangeMsgListenerEventProducer;
 import com.x.farmer.bft.exception.BftServiceException;
 import com.x.farmer.bft.execute.MessageHandler;
 import com.x.farmer.bft.listener.CallBackListener;
+import com.x.farmer.bft.listener.CallBackListenerPool;
 import com.x.farmer.bft.message.AcceptMessage;
+import com.x.farmer.bft.message.LeaderChangeMessage;
 import com.x.farmer.bft.message.RequestMessage;
+import com.x.farmer.bft.message.WriteMessage;
 import com.x.farmer.bft.server.ConsensusServer;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -27,6 +30,10 @@ public class AcceptMsgListenerEventHandler implements EventHandler<CallBackListe
 
     private ViewController viewController;
 
+    private CallBackListenerPool listenerPool;
+
+    private ReplicaClientPool replicaClientPool;
+
     private ConsensusServer consensusServer;
 
     private MessageHandler messageHandler;
@@ -35,18 +42,25 @@ public class AcceptMsgListenerEventHandler implements EventHandler<CallBackListe
 
     private LayerEngine layerEngine;
 
+    private LeaderChangeMsgListenerEventProducer listenerEventProducer;
+
     public AcceptMsgListenerEventHandler(ViewController viewController,
+                                         CallBackListenerPool listenerPool,
+                                         ReplicaClientPool replicaClientPool,
                                          ConsensusServer consensusServer,
                                          MessageHandler messageHandler,
                                          RequestDatas requestDatas) {
         this.viewController = viewController;
+        this.listenerPool = listenerPool;
+        this.replicaClientPool = replicaClientPool;
         this.consensusServer = consensusServer;
         this.messageHandler = messageHandler;
         this.requestDatas = requestDatas;
     }
 
-    public void initLayerEngine(LayerEngine layerEngine) {
+    public void initLayerEngineAndLeaderChangeListener(LayerEngine layerEngine, LeaderChangeMsgListenerEventProducer listenerEventProducer) {
         this.layerEngine = layerEngine;
+        this.listenerEventProducer = listenerEventProducer;
     }
 
     @Override
@@ -56,13 +70,30 @@ public class AcceptMsgListenerEventHandler implements EventHandler<CallBackListe
 
     private void handleListener(CallBackListener<AcceptMessage> listener) {
 
-
         try {
             List<AcceptMessage> acceptMessages = listener.waitResponses(viewController.getBatchTimeout(), TimeUnit.MILLISECONDS);
 
+            AcceptMessage acceptAcceptMessage = canAccept(acceptMessages);
             // 判断是否满足条件
-            if (isEqual(acceptMessages)) {
-                execute(listener.getRequestMessages(), acceptMessages.get(0));
+            if (acceptAcceptMessage != null) {
+                execute(listener.getRequestMessages(), acceptAcceptMessage);
+            } else {
+                // 触发LeaderChange消息
+                LeaderChangeMessage leaderChangeMessage = convertToLeaderChangeMessage(acceptMessages, listener);
+
+                CallBackListener<LeaderChangeMessage> leaderChangeMsgListener = listenerPool.leaderChangeMsgCallBackListener(
+                        listener.getKey());
+
+                if (leaderChangeMsgListener != null) {
+                    consensusServer.addLeaderChangeMsgListener(leaderChangeMsgListener);
+
+                    replicaClientPool.broadcastLeaderChangeMessage(leaderChangeMessage);
+
+                    leaderChangeMsgListener.receive(leaderChangeMessage);
+
+                    // 通过另外的线程处理该监听器
+                    listenerEventProducer.produce(leaderChangeMsgListener);
+                }
             }
         } catch (BftServiceException e) {
             return;
@@ -78,24 +109,48 @@ public class AcceptMsgListenerEventHandler implements EventHandler<CallBackListe
         }
     }
 
-    private boolean isEqual(List<AcceptMessage> acceptMessages) {
+    private LeaderChangeMessage convertToLeaderChangeMessage(List<AcceptMessage> acceptMessages, CallBackListener<AcceptMessage> listener) {
+        return new LeaderChangeMessage(viewController.localId(), 0L, listener.getKey(), viewController.newLeader());
+    }
+
+    private AcceptMessage canAccept(List<AcceptMessage> acceptMessages) {
 
         // 首先判断数量是否满足
         if (viewController.isMeetRule(acceptMessages.size())) {
-            // 判断AcceptMessage中的内容是否一致
-            byte[] agreement = acceptMessages.get(0).getAgreement();
 
-            for (int i = 1; i < acceptMessages.size(); i++) {
-
-                if (!Arrays.equals(agreement, acceptMessages.get(i).getAgreement())) {
-                    return false;
+            // 判断agree消息的数量是否满足数量，
+            Map<byte[], Integer> agreements = new HashMap<>(acceptMessages.size());
+            // 首先对消息进行分组
+            for (AcceptMessage acceptMessage : acceptMessages) {
+                byte[] agreement = acceptMessage.getAgreement();
+                agreements.putIfAbsent(agreement, 1);
+                int size = agreements.get(agreement);
+                agreements.put(agreement, size + 1);
+            }
+            byte[] confirmBytes = null;
+            for (Map.Entry<byte[], Integer> entry : agreements.entrySet()) {
+                byte[] key = entry.getKey();
+                int size = entry.getValue();
+                if (viewController.isMeetRule(size)) {
+                    confirmBytes = key;
+                    break;
                 }
             }
 
-            return true;
+            if (confirmBytes != null) {
+                // 寻找一个满足条件的WriteMessage作为结果
+                for (AcceptMessage acceptMessage : acceptMessages) {
+                    byte[] agreement = acceptMessage.getAgreement();
+                    if (!Arrays.equals(agreement, confirmBytes)) {
+                        return acceptMessage;
+                    }
+                }
+            }
+
+            return null;
         }
 
-        return false;
+        return null;
     }
 
     private void execute(List<RequestMessage> requestMessages, AcceptMessage acceptMessage) {

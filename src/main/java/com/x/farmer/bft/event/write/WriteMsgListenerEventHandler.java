@@ -13,10 +13,9 @@ import com.x.farmer.bft.listener.CallBackListenerPool;
 import com.x.farmer.bft.message.*;
 import com.x.farmer.bft.server.ConsensusServer;
 import com.x.farmer.bft.util.MessageUtils;
+import org.apache.commons.lang3.ArrayUtils;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -64,10 +63,12 @@ public class WriteMsgListenerEventHandler implements EventHandler<CallBackListen
             // 假设超时的消息会在大部分节点定时器中自动发现，并发送
             List<WriteMessage> writeMessages = listener.waitResponses(viewController.getBatchTimeout(), TimeUnit.MILLISECONDS);
             // 判断是否满足条件
-            boolean canAccept = canAccept(writeMessages);
+            WriteMessage acceptWriteMessage = canAccept(writeMessages);
 
-            if (canAccept) {
-                acceptMessage = convertToAcceptMessage(writeMessages.get(0), listener.getRequestMessages());
+            if (acceptWriteMessage != null) {
+                acceptMessage = convertToAcceptMessage(acceptWriteMessage, listener.getRequestMessages());
+            } else {
+                throw new IllegalStateException("Can not accept all Write Messages !!!");
             }
         } catch (BftServiceException e) {
             // TODO 已经被处理过，因此不需要再处理
@@ -76,7 +77,7 @@ public class WriteMsgListenerEventHandler implements EventHandler<CallBackListen
             // 生成不同意的答案
             byte[] agreement = MessageUtils.randomBytes();
 
-            acceptMessage = new AcceptMessage(viewController.localId(), viewController.newSequence(), listener.getKey(),
+            acceptMessage = new AcceptMessage(viewController.localId(), 0L, listener.getKey(),
                     agreement);
         } finally {
             // 不管是否满足都需要将该Listener移除
@@ -97,24 +98,44 @@ public class WriteMsgListenerEventHandler implements EventHandler<CallBackListen
         acceptMsgListenerProducer.produce(acceptMsgListener);
     }
 
-    private boolean canAccept(List<WriteMessage> writeMessages) {
+    private WriteMessage canAccept(List<WriteMessage> writeMessages) {
 
         // 首先判断数量是否满足
         if (viewController.isMeetRule(writeMessages.size())) {
-            // 判断WriteMessage中的内容是否一致
-            byte[] agreement = writeMessages.get(0).getAgreement();
 
-            for (int i = 1; i < writeMessages.size(); i++) {
-
-                if (!Arrays.equals(agreement, writeMessages.get(i).getAgreement())) {
-                    return false;
+            // 判断agree消息的数量是否满足数量，
+            Map<byte[], Integer> agreements = new HashMap<>(writeMessages.size());
+            // 首先对消息进行分组
+            for (WriteMessage writeMessage : writeMessages) {
+                byte[] agreement = writeMessage.getAgreement();
+                agreements.putIfAbsent(agreement, 1);
+                int size = agreements.get(agreement);
+                agreements.put(agreement, size + 1);
+            }
+            byte[] confirmBytes = null;
+            for (Map.Entry<byte[], Integer> entry : agreements.entrySet()) {
+                byte[] key = entry.getKey();
+                int size = entry.getValue();
+                if (viewController.isMeetRule(size)) {
+                    confirmBytes = key;
+                    break;
                 }
             }
 
-            return true;
+            if (confirmBytes != null) {
+                // 寻找一个满足条件的WriteMessage作为结果
+                for (WriteMessage writeMessage : writeMessages) {
+                    byte[] agreement = writeMessage.getAgreement();
+                    if (!Arrays.equals(agreement, confirmBytes)) {
+                        return writeMessage;
+                    }
+                }
+            }
+
+            return null;
         }
 
-        return false;
+        return null;
     }
 
     private AcceptMessage convertToAcceptMessage(WriteMessage writeMessage, List<RequestMessage> requestMessages) {
@@ -128,7 +149,7 @@ public class WriteMsgListenerEventHandler implements EventHandler<CallBackListen
 
         byte[] agreement = messageHandler.execute(commands);
 
-        return new AcceptMessage(viewController.localId(), viewController.newSequence(), writeMessage.key(),
+        return new AcceptMessage(viewController.localId(), writeMessage.getSequence(), writeMessage.key(),
                 agreement, writeMessage.getIdAndSequences());
     }
 }

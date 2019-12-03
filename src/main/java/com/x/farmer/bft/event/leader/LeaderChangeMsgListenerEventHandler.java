@@ -55,9 +55,9 @@ public class LeaderChangeMsgListenerEventHandler implements EventHandler<CallBac
             // 假设超时的消息会在大部分节点定时器中自动发现，并发送
             leaderChangeMessages = listener.waitResponses(viewController.getBatchTimeout(), TimeUnit.MILLISECONDS);
 
-            int newLeader = canAccept(leaderChangeMessages);
+            LeaderChangeMessage acceptLeaderChangeMessage = canAccept(leaderChangeMessages);
 
-            if (newLeader >= 0) {
+            if (acceptLeaderChangeMessage != null) {
                 // TODO 处理领导者改变
                 /**
                  * 领导者改变时，会发生如下变化
@@ -65,7 +65,7 @@ public class LeaderChangeMsgListenerEventHandler implements EventHandler<CallBac
                  * 2、最新的Propose消息进行校验时，需要按照该消息来处理；
                  * 3、若当前节点是Leader，则通知当前线程进行处理；
                  */
-                viewController.newLeader(newLeader);
+                viewController.newLeader(acceptLeaderChangeMessage.getNewLeader());
                 if (viewController.isLeader()) {
                     layerEngine.isLeader();
                 }
@@ -80,23 +80,35 @@ public class LeaderChangeMsgListenerEventHandler implements EventHandler<CallBac
         }
     }
 
-    private int canAccept(List<LeaderChangeMessage> leaderChangeMessages) {
+    private LeaderChangeMessage canAccept(List<LeaderChangeMessage> leaderChangeMessages) {
+
+        // 首先判断LeaderChange的数量是否达标
+        // 然后判断LeaderChange类型是否一致（需要依靠msgID）
+        // 然后判断LeaderChange选择的newLeader是否一致
 
         // 首先判断数量是否满足
         if (viewController.isMeetRule(leaderChangeMessages.size())) {
-            // 判断WriteMessage中的内容是否一致
-            int newLeader = leaderChangeMessages.get(0).getNewLeader();
 
-            for (int i = 1; i < leaderChangeMessages.size(); i++) {
-
-                if (newLeader != leaderChangeMessages.get(i).getNewLeader()) {
-                    return -1;
+            LeaderChangeMessage acceptLeaderChangeMessage = leaderChangeMessages.get(0);
+            int newLeader = acceptLeaderChangeMessage.getNewLeader();
+            if (acceptLeaderChangeMessage.getMsgId() == -1L) {
+                // 表明此LeaderChange是由Accept消息触发
+                boolean isAccept = true;
+                for (int i = 1; i < leaderChangeMessages.size(); i++) {
+                    LeaderChangeMessage msg = leaderChangeMessages.get(i);
+                    if (msg.getMsgId() != -1L || newLeader != msg.getNewLeader()) {
+                        isAccept = false;
+                        break;
+                    }
                 }
+                if (isAccept) {
+                    return acceptLeaderChangeMessage;
+                }
+            } else {
+                // TODO 超时消息触发，要求msgID和sequence必须一致（待定）
             }
-
-            return newLeader;
         }
 
-        return -1;
+        return null;
     }
 }

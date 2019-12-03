@@ -8,7 +8,7 @@ public class MessageUtils {
 
     private static final Random RM = new Random();
 
-    private static final int RM_BYTES_LENGTH = 16;
+    private static final int RM_BYTES_LENGTH = 32;
 
     public static Message decode(byte[] msgBytes) {
 
